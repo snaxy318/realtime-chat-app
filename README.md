@@ -1,2 +1,1 @@
-# realtime-chat-app
-Real-time chat app with CI/CD pipeline
+Realtime Chat App with CI/CD pipeline
