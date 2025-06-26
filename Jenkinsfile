@@ -9,7 +9,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git 'https://github.com/snaxy318/realtime-chat-app.git'
+                git branch: 'main', url: 'https://github.com/snaxy318/realtime-chat-app.git'
             }
         }
 
