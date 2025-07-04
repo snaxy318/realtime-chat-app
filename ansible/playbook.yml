@@ -1,0 +1,114 @@
+---
+- name: Setup Realtime Chat App on EC2
+  hosts: ec2
+  become: yes
+
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Update and install packages
+      apt:
+        name: "{{ item }}"
+        update_cache: yes
+      loop:
+        - curl
+        - git
+        - nginx
+        - nodejs
+        - npm
+
+    - name: Clone GitHub repository
+      git:
+        repo: https://github.com/snaxy318/realtime-chat-app.git
+        dest: /home/ubuntu/realtime-chat-app-1
+        version: main
+        force: yes
+
+    - name: Install backend dependencies
+      npm:
+        path: /home/ubuntu/realtime-chat-app-1/backend
+
+    - name: Install frontend dependencies
+      npm:
+        path: /home/ubuntu/realtime-chat-app-1/frontend
+
+    - name: Build frontend React app
+      command: npm run build
+      args:
+        chdir: /home/ubuntu/realtime-chat-app-1/frontend
+
+    - name: Fix permissions on build directory for NGINX
+      file:
+        path: /home/ubuntu/realtime-chat-app-1/frontend/build
+        mode: '0755'
+        recurse: yes
+    
+    - name: Fix build directory ownership and permissions
+      file:
+        path: /home/ubuntu/realtime-chat-app-1/frontend/build
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        recurse: yes
+
+    - name: Ensure NGINX can access parent directories
+      file:
+        path: "{{ item }}"
+        mode: '0755'
+      loop:
+        - /home/ubuntu
+        - /home/ubuntu/realtime-chat-app-1
+        - /home/ubuntu/realtime-chat-app-1/frontend
+
+
+    - name: Create frontend .env file
+      copy:
+        dest: /home/ubuntu/realtime-chat-app-1/frontend/.env
+        content: |
+          REACT_APP_SOCKET_URL=http://{{ backend_domain }}
+
+    - name: Start backend server
+      shell: nohup node index.js > app.log 2>&1 &
+      args:
+        chdir: /home/ubuntu/realtime-chat-app-1/backend
+
+    - name: Create DuckDNS update script
+      copy:
+        src: files/duck.sh
+        dest: /home/ubuntu/duckdns/duck.sh
+        mode: '0700'
+
+    - name: Setup cron job for DuckDNS
+      cron:
+        name: "DuckDNS IP Updater"
+        job: "/home/ubuntu/duckdns/duck.sh >/dev/null 2>&1"
+        minute: "*/5"
+
+    - name: Configure NGINX for backend
+      copy:
+        src: nginx-api-chatapp318
+        dest: /etc/nginx/sites-available/api-chatapp318
+
+    - name: Configure NGINX for frontend
+      copy:
+        src: nginx-chatapp318
+        dest: /etc/nginx/sites-available/chatapp318
+
+    - name: Enable NGINX sites
+      file:
+        src: "/etc/nginx/sites-available/{{ item }}"
+        dest: "/etc/nginx/sites-enabled/{{ item }}"
+        state: link
+        force: yes
+      loop:
+        - api-chatapp318
+        - chatapp318
+
+    - name: Test NGINX config
+      command: nginx -t
+
+    - name: Restart NGINX
+      service:
+        name: nginx
+        state: restarted

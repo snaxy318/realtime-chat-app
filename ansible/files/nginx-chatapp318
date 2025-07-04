@@ -1,0 +1,11 @@
+server {
+    listen 80;
+    server_name chatapp318.duckdns.org;
+
+    root /home/ubuntu/realtime-chat-app-1/frontend/build;
+    index index.html index.htm;
+
+    location / {
+        try_files $uri /index.html;
+    }
+}
