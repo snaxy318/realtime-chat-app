@@ -43,6 +43,24 @@ pipeline {
                 sh 'docker compose up -d'
             }
         }
+
+        stage('Terraform Init & Apply') {
+            steps {
+                dir('ec2-terraform') {
+                    sh 'terraform init'
+                    sh 'terraform apply -auto-approve'
+                }
+            }
+        }
+
+        stage('Ansible Provisioning') {
+            steps {
+                dir('ansible') {
+                    sh 'sleep 60'
+                    sh 'ansible-playbook -i inventory.ini playbook.yml'
+                }
+            }
+        }
     }
 
     post {
