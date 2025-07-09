@@ -7,16 +7,29 @@
     - vars.yml
 
   tasks:
-    - name: Update and install packages
+
+    - name: Install curl & git first
       apt:
         name: "{{ item }}"
         update_cache: yes
       loop:
         - curl
         - git
-        - nginx
-        - nodejs
-        - npm
+      tags: base
+
+    - name: Install Node.js (v20 LTS from NodeSource)
+      shell: |
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+        apt-get install -y nodejs
+      args:
+        executable: /bin/bash
+      tags: node
+
+    - name: Install NGINX
+      apt:
+        name: nginx
+        update_cache: yes
+      tags: nginx
 
     - name: Clone GitHub repository
       git:
@@ -24,26 +37,31 @@
         dest: /home/ubuntu/realtime-chat-app-1
         version: main
         force: yes
+      tags: code
 
     - name: Install backend dependencies
       npm:
         path: /home/ubuntu/realtime-chat-app-1/backend
+      tags: backend
 
     - name: Install frontend dependencies
       npm:
         path: /home/ubuntu/realtime-chat-app-1/frontend
+      tags: frontend
 
     - name: Build frontend React app
       command: npm run build
       args:
         chdir: /home/ubuntu/realtime-chat-app-1/frontend
+      tags: frontend
 
     - name: Fix permissions on build directory for NGINX
       file:
         path: /home/ubuntu/realtime-chat-app-1/frontend/build
         mode: '0755'
         recurse: yes
-    
+      tags: permissions
+
     - name: Fix build directory ownership and permissions
       file:
         path: /home/ubuntu/realtime-chat-app-1/frontend/build
@@ -51,6 +69,7 @@
         group: www-data
         mode: '0755'
         recurse: yes
+      tags: permissions
 
     - name: Ensure NGINX can access parent directories
       file:
@@ -60,40 +79,55 @@
         - /home/ubuntu
         - /home/ubuntu/realtime-chat-app-1
         - /home/ubuntu/realtime-chat-app-1/frontend
-
+      tags: permissions
 
     - name: Create frontend .env file
       copy:
         dest: /home/ubuntu/realtime-chat-app-1/frontend/.env
         content: |
           REACT_APP_SOCKET_URL=http://{{ backend_domain }}
+      tags: frontend
 
-    - name: Start backend server
-      shell: nohup node index.js > app.log 2>&1 &
+    - name: Start backend server with nohup
+      shell: |
+        nohup node index.js > /home/ubuntu/realtime-chat-app-1/backend/app.log 2>&1 &
       args:
         chdir: /home/ubuntu/realtime-chat-app-1/backend
+      tags: backend
+
+    - name: Wait for backend port to be open
+      wait_for:
+        port: 5000
+        delay: 5
+      tags: backend
 
     - name: Create DuckDNS update script
       copy:
         src: files/duck.sh
         dest: /home/ubuntu/duckdns/duck.sh
         mode: '0700'
+      tags: duckdns
 
     - name: Setup cron job for DuckDNS
       cron:
         name: "DuckDNS IP Updater"
         job: "/home/ubuntu/duckdns/duck.sh >/dev/null 2>&1"
         minute: "*/5"
+      tags: duckdns
 
     - name: Configure NGINX for backend
       copy:
         src: nginx-api-chatapp318
         dest: /etc/nginx/sites-available/api-chatapp318
+      notify: Reload NGINX
+      tags: nginx
 
     - name: Configure NGINX for frontend
       copy:
         src: nginx-chatapp318
         dest: /etc/nginx/sites-available/chatapp318
+      notify: Reload NGINX
+      tags: nginx
 
     - name: Enable NGINX sites
       file:
@@ -104,11 +138,60 @@
       loop:
         - api-chatapp318
         - chatapp318
+      notify: Reload NGINX
+      tags: nginx
 
     - name: Test NGINX config
       command: nginx -t
+      notify: Reload NGINX
+      tags: nginx
 
-    - name: Restart NGINX
+    - name: Ensure Docker is installed
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+      tags: monitoring
+
+    - name: Install Docker Compose
+      get_url:
+        url: https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-linux-x86_64
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+      tags: monitoring
+
+    - name: Create monitoring directory
+      file:
+        path: /home/ubuntu/monitoring
+        state: directory
+        mode: '0755'
+      tags: monitoring
+
+    - name: Copy Docker Compose file for Graphite
+      copy:
+        dest: /home/ubuntu/monitoring/docker-compose.yml
+        content: |
+          version: '3'
+          services:
+            graphite:
+              image: graphiteapp/graphite-statsd
+              container_name: graphite
+              ports:
+                - "8080:80"
+                - "2003:2003"
+                - "8125:8125/udp"
+              restart: unless-stopped
+        mode: '0644'
+      tags: monitoring
+
+    - name: Start Graphite container
+      shell: docker-compose up -d
+      args:
+        chdir: /home/ubuntu/monitoring
+      tags: monitoring
+
+  handlers:
+    - name: Reload NGINX
       service:
         name: nginx
-        state: restarted
+        state: reloaded
